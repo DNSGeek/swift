@@ -1,8 +1,8 @@
-//===--- SwiftEditorIntefaceGen.cpp ---------------------------------------===//
+//===--- SwiftEditorInterfaceGen.cpp --------------------------------------===//
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2015 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See http://swift.org/LICENSE.txt for license information
@@ -243,6 +243,7 @@ static void reportSemanticAnnotations(const SourceTextInfo &IFaceInfo,
 
 static bool getModuleInterfaceInfo(ASTContext &Ctx,
                                    StringRef ModuleName,
+                                   Optional<StringRef> Group,
                                  SwiftInterfaceGenContext::Implementation &Impl,
                                    std::string &ErrMsg) {
   Module *&Mod = Impl.Mod;
@@ -285,9 +286,9 @@ static bool getModuleInterfaceInfo(ASTContext &Ctx,
   SmallString<128> Text;
   llvm::raw_svector_ostream OS(Text);
   AnnotatingPrinter Printer(Info, OS);
-  printSubmoduleInterface(Mod, SplitModuleName,
+  printSubmoduleInterface(Mod, SplitModuleName, Group,
                           TraversalOptions,
-                          Printer, Options);
+                          Printer, Options, false);
 
   Info.Text = OS.str();
   return false;
@@ -341,6 +342,7 @@ SwiftInterfaceGenContextRef
 SwiftInterfaceGenContext::create(StringRef DocumentName,
                                  bool IsModule,
                                  StringRef ModuleOrHeaderName,
+                                 Optional<StringRef> Group,
                                  CompilerInvocation Invocation,
                                  std::string &ErrMsg) {
   SwiftInterfaceGenContextRef IFaceGenCtx{ new SwiftInterfaceGenContext() };
@@ -370,7 +372,7 @@ SwiftInterfaceGenContext::create(StringRef DocumentName,
   }
 
   if (IsModule) {
-    if (getModuleInterfaceInfo(Ctx, ModuleOrHeaderName, IFaceGenCtx->Impl,
+    if (getModuleInterfaceInfo(Ctx, ModuleOrHeaderName, Group, IFaceGenCtx->Impl,
                                ErrMsg))
       return nullptr;
   } else {
@@ -542,13 +544,14 @@ SwiftInterfaceGenMap::find(StringRef ModuleName,
   return nullptr;
 }
 
-//============================================================================//
+//===----------------------------------------------------------------------===//
 // EditorOpenInterface
-//============================================================================//
+//===----------------------------------------------------------------------===//
 
 void SwiftLangSupport::editorOpenInterface(EditorConsumer &Consumer,
                                            StringRef Name,
                                            StringRef ModuleName,
+                                           Optional<StringRef> Group,
                                            ArrayRef<const char *> Args) {
   CompilerInstance CI;
   // Display diagnostics to stderr.
@@ -580,6 +583,7 @@ void SwiftLangSupport::editorOpenInterface(EditorConsumer &Consumer,
   auto IFaceGenRef = SwiftInterfaceGenContext::create(Name,
                                                       /*IsModule=*/true,
                                                       ModuleName,
+                                                      Group,
                                                       Invocation,
                                                       ErrMsg);
   if (!IFaceGenRef) {
@@ -683,6 +687,7 @@ void SwiftLangSupport::editorOpenHeaderInterface(EditorConsumer &Consumer,
   auto IFaceGenRef = SwiftInterfaceGenContext::create(Name,
                                                       /*IsModule=*/false,
                                                       HeaderName,
+                                                      None,
                                                       Invocation,
                                                       Error);
   if (!IFaceGenRef) {

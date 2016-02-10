@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2015 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See http://swift.org/LICENSE.txt for license information
@@ -24,6 +24,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/ilist.h"
 #include "llvm/ADT/ilist_node.h"
+#include "llvm/Support/TrailingObjects.h"
 
 namespace llvm {
 
@@ -138,7 +139,7 @@ enum class ConstraintClassification : char {
   /// it a reference type.
   Member,
 
-  /// \brief An property of a single type, such as whether it is an archetype.
+  /// \brief A property of a single type, such as whether it is an archetype.
   TypeProperty,
 
   /// \brief A disjunction constraint.
@@ -325,7 +326,10 @@ public:
 
 
 /// \brief A constraint between two type variables.
-class Constraint : public llvm::ilist_node<Constraint> {
+class Constraint final : public llvm::ilist_node<Constraint>,
+    private llvm::TrailingObjects<Constraint, TypeVariableType *> {
+  friend TrailingObjects;
+
   /// \brief The kind of constraint.
   ConstraintKind Kind : 8;
 
@@ -417,7 +421,7 @@ class Constraint : public llvm::ilist_node<Constraint> {
 
   /// Retrieve the type variables buffer, for internal mutation.
   MutableArrayRef<TypeVariableType *> getTypeVariablesBuffer() {
-    return { reinterpret_cast<TypeVariableType **>(this + 1), NumTypeVariables };
+    return { getTrailingObjects<TypeVariableType *>(), NumTypeVariables };
   }
 
 public:
@@ -485,8 +489,7 @@ public:
 
   /// Retrieve the set of type variables referenced by this constraint.
   ArrayRef<TypeVariableType *> getTypeVariables() const {
-    return { reinterpret_cast<TypeVariableType * const *>(this + 1), 
-             NumTypeVariables };
+    return {getTrailingObjects<TypeVariableType*>(), NumTypeVariables};
   }
 
   /// \brief Determine the classification of this constraint, providing

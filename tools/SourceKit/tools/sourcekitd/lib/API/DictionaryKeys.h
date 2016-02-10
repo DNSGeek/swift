@@ -1,8 +1,8 @@
-//===--- DictionaryKeys.h - --------------------------------------*- C++ -*-==//
+//===--- DictionaryKeys.h - -------------------------------------*- C++ -*-===//
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2015 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See http://swift.org/LICENSE.txt for license information
@@ -26,9 +26,12 @@ extern SourceKit::UIdent KeyOffset;
 extern SourceKit::UIdent KeySourceFile;
 extern SourceKit::UIdent KeySourceText;
 extern SourceKit::UIdent KeyModuleName;
+extern SourceKit::UIdent KeyGroupName;
 extern SourceKit::UIdent KeyNotification;
 extern SourceKit::UIdent KeyKeyword;
 extern SourceKit::UIdent KeyName;
+extern SourceKit::UIdent KeyNames;
+extern SourceKit::UIdent KeyUIDs;
 extern SourceKit::UIdent KeyEnableSyntaxMap;
 extern SourceKit::UIdent KeyEnableDiagnostics;
 extern SourceKit::UIdent KeySyntacticOnly;
@@ -90,9 +93,11 @@ extern SourceKit::UIdent KeyAttribute;
 extern SourceKit::UIdent KeyInheritedTypes;
 extern SourceKit::UIdent KeyFormatOptions;
 extern SourceKit::UIdent KeyCodeCompleteOptions;
+extern SourceKit::UIdent KeyFilterRules;
 extern SourceKit::UIdent KeyNextRequestStart;
 extern SourceKit::UIdent KeyPopular;
 extern SourceKit::UIdent KeyUnpopular;
+extern SourceKit::UIdent KeyHide;
 
 extern SourceKit::UIdent KeyIsUnavailable;
 extern SourceKit::UIdent KeyIsDeprecated;
@@ -103,6 +108,7 @@ extern SourceKit::UIdent KeyDeprecated;
 extern SourceKit::UIdent KeyObsoleted;
 extern SourceKit::UIdent KeyRemoveCache;
 extern SourceKit::UIdent KeyTypeInterface;
+extern SourceKit::UIdent KeyModuleGroups;
 
 /// \brief Used for determining the printing order of dictionary keys.
 bool compareDictKeys(SourceKit::UIdent LHS, SourceKit::UIdent RHS);

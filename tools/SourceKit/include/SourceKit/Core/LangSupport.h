@@ -1,8 +1,8 @@
-//===--- LangSupport.h - -----------------------------------------*- C++ -*-==//
+//===--- LangSupport.h - ----------------------------------------*- C++ -*-===//
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2015 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See http://swift.org/LICENSE.txt for license information
@@ -164,6 +164,21 @@ struct CustomCompletionInfo {
   swift::OptionSet<Context> Contexts;
 };
 
+struct FilterRule {
+  enum Kind {
+    Everything,
+    Module,
+    Keyword,
+    Literal,
+    CustomCompletion,
+    Identifier,
+  };
+  Kind kind;
+  bool hide;
+  std::vector<StringRef> names;
+  std::vector<UIdent> uids;
+};
+
 enum class DiagnosticSeverityKind {
   Warning,
   Error
@@ -258,7 +273,8 @@ struct CursorInfo {
   StringRef USR;
   StringRef TypeName;
   StringRef DocComment;
-  StringRef TypeInteface;
+  StringRef TypeInterface;
+  StringRef GroupName;
   /// Annotated XML pretty printed declaration.
   StringRef AnnotatedDeclaration;
   /// Non-empty if the symbol was imported from a clang module.
@@ -368,8 +384,8 @@ public:
                             ArrayRef<const char *> Args) = 0;
 
   virtual void codeCompleteOpen(StringRef name, llvm::MemoryBuffer *inputBuf,
-                                unsigned offset,
-                                OptionsDictionary *options,
+                                unsigned offset, OptionsDictionary *options,
+                                ArrayRef<FilterRule> filterRules,
                                 GroupedCodeCompletionConsumer &consumer,
                                 ArrayRef<const char *> args) = 0;
 
@@ -397,6 +413,7 @@ public:
   virtual void editorOpenInterface(EditorConsumer &Consumer,
                                    StringRef Name,
                                    StringRef ModuleName,
+                                   Optional<StringRef> Group,
                                    ArrayRef<const char *> Args) = 0;
 
   virtual void editorOpenHeaderInterface(EditorConsumer &Consumer,
@@ -443,6 +460,11 @@ public:
   virtual void findInterfaceDocument(StringRef ModuleName,
                                      ArrayRef<const char *> Args,
                     std::function<void(const InterfaceDocInfo &)> Receiver) = 0;
+
+  virtual void findModuleGroups(StringRef ModuleName,
+                                ArrayRef<const char *> Args,
+                                std::function<void(ArrayRef<StringRef>,
+                                                   StringRef Error)> Receiver) = 0;
 
   virtual void getDocInfo(llvm::MemoryBuffer *InputBuf,
                           StringRef ModuleName,

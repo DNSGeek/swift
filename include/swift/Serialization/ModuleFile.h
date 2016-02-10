@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2015 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See http://swift.org/LICENSE.txt for license information
@@ -296,6 +296,9 @@ private:
   using SerializedDeclCommentTable =
       llvm::OnDiskIterableChainedHashTable<DeclCommentTableInfo>;
 
+  using GroupNameTable = llvm::DenseMap<unsigned, StringRef>;
+
+  std::unique_ptr<GroupNameTable> GroupNamesMap;
   std::unique_ptr<SerializedDeclCommentTable> DeclCommentTable;
 
   struct {
@@ -341,7 +344,7 @@ private:
   template <typename T, typename ...Args>
   T *createDecl(Args &&... args);
 
-  /// Constructs an new module and validates it.
+  /// Constructs a new module and validates it.
   ModuleFile(std::unique_ptr<llvm::MemoryBuffer> moduleInputBuffer,
              std::unique_ptr<llvm::MemoryBuffer> moduleDocInputBuffer,
              bool isFramework, serialization::ExtendedValidationInfo *extInfo);
@@ -398,6 +401,9 @@ private:
   std::unique_ptr<SerializedDeclCommentTable>
   readDeclCommentTable(ArrayRef<uint64_t> fields, StringRef blobData);
 
+  std::unique_ptr<GroupNameTable>
+  readGroupTable(ArrayRef<uint64_t> fields, StringRef blobData);
+
   /// Reads the comment block, which contains USR to comment mappings.
   ///
   /// Returns false if there was an error.
@@ -408,6 +414,8 @@ private:
   /// If the record at the cursor is not a pattern, returns null.
   Pattern *maybeReadPattern();
 
+  ParameterList *readParameterList();
+  
   GenericParamList *maybeGetOrReadGenericParams(serialization::DeclID contextID,
                                                 DeclContext *DC,
                                                 llvm::BitstreamCursor &Cursor);
@@ -519,7 +527,7 @@ public:
   /// Note that this may cause other decls to load as well.
   void loadExtensions(NominalTypeDecl *nominal);
 
-  /// \brief Load the methods within the given class that that produce
+  /// \brief Load the methods within the given class that produce
   /// Objective-C class or instance methods with the given selector.
   ///
   /// \param classDecl The class in which we are searching for @objc methods.
@@ -550,6 +558,11 @@ public:
   void lookupClassMember(Module::AccessPathTy accessPath,
                          DeclName name,
                          SmallVectorImpl<ValueDecl*> &results);
+
+  /// Find all Objective-C methods with the given selector.
+  void lookupObjCMethods(
+         ObjCSelector selector,
+         SmallVectorImpl<AbstractFunctionDecl *> &results);
 
   /// Reports all link-time dependencies.
   void collectLinkLibraries(Module::LinkLibraryCallback callback) const;
@@ -589,12 +602,11 @@ public:
   void verify() const;
 
   virtual void loadAllMembers(Decl *D,
-                              uint64_t contextData,
-                              bool *ignored) override;
+                              uint64_t contextData) override;
 
   virtual void
   loadAllConformances(const Decl *D, uint64_t contextData,
-                      SmallVectorImpl<ProtocolConformance*> &Conforms) override;
+                    SmallVectorImpl<ProtocolConformance*> &Conforms) override;
 
   virtual TypeLoc loadAssociatedTypeDefault(const AssociatedTypeDecl *ATD,
                                             uint64_t contextData) override;
@@ -602,6 +614,9 @@ public:
   virtual void finishNormalConformance(NormalProtocolConformance *conformance,
                                        uint64_t contextData) override;
 
+  Optional<StringRef> getGroupNameById(unsigned Id);
+  Optional<StringRef> getGroupNameForDecl(const Decl *D);
+  void collectAllGroups(std::vector<StringRef> &Names);
   Optional<BriefAndRawComment> getCommentForDecl(const Decl *D);
   Optional<BriefAndRawComment> getCommentForDeclByUSR(StringRef USR);
 
@@ -652,9 +667,7 @@ public:
   Optional<Substitution> maybeReadSubstitution(llvm::BitstreamCursor &Cursor);
 
   /// Recursively reads a protocol conformance from the given cursor.
-  ///
-  /// Note that a null conformance is valid for archetypes.
-  ProtocolConformance *readConformance(llvm::BitstreamCursor &Cursor);
+  ProtocolConformanceRef readConformance(llvm::BitstreamCursor &Cursor);
 
   /// Read the given normal conformance from the current module file.
   NormalProtocolConformance *

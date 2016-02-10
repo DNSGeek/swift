@@ -28,11 +28,14 @@ cscope.out
 #==============================================================================#
 # Directories to ignore (do not add trailing '/'s, they skip symlinks).
 #==============================================================================#
-# Swift performance test suite.
-benchmark/PerfTestSuite
-
 # Generated docs
 docs/_build
 
 # Finder metadata
 .DS_Store
+
+#==============================================================================#
+# Ignore CMake temporary files
+#==============================================================================#
+CMakeCache.txt
+CMakeFiles

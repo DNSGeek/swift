@@ -1,8 +1,8 @@
-//===--- TestOptions.h - -----------------------------------------*- C++ -*-==//
+//===--- TestOptions.h - ----------------------------------------*- C++ -*-===//
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2015 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See http://swift.org/LICENSE.txt for license information
@@ -44,7 +44,8 @@ enum class SourceKitRequest {
   Edit,
   PrintAnnotations,
   PrintDiags,
-  ExtractComment
+  ExtractComment,
+  ModuleGroups,
 };
 
 struct TestOptions {
@@ -53,6 +54,7 @@ struct TestOptions {
   std::string TextInputFile;
   std::string JsonRequestPath;
   llvm::Optional<std::string> SourceText;
+  std::string ModuleGroupName;
   unsigned Line = 0;
   unsigned Col = 0;
   unsigned Offset = 0;
@@ -67,6 +69,7 @@ struct TestOptions {
   std::string USR;
   bool CheckInterfaceIsASCII = false;
   bool UsedSema = false;
+  bool PrintResponseAsJSON = false;
 
   bool parseArgs(llvm::ArrayRef<const char *> Args);
 };

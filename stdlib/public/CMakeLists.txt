@@ -1,10 +1,23 @@
 # C++ code in the runtime and standard library should generally avoid
 # introducing static constructors or destructors.
 set(SWIFT_CORE_CXX_FLAGS)
+
 check_cxx_compiler_flag("-Werror -Wglobal-constructors" CXX_SUPPORTS_GLOBAL_CONSTRUCTORS_WARNING)
-append_if(CXX_SUPPORTS_GLOBAL_CONSTRUCTORS_WARNING "-Wglobal-constructors" SWIFT_CORE_CXX_FLAGS)
+if(CXX_SUPPORTS_GLOBAL_CONSTRUCTORS_WARNING)
+  list(APPEND SWIFT_CORE_CXX_FLAGS "-Wglobal-constructors")
+endif()
+
 check_cxx_compiler_flag("-Wexit-time-destructors" CXX_SUPPORTS_EXIT_TIME_DESTRUCTORS_WARNING)
-append_if(CXX_SUPPORTS_EXIT_TIME_DESTRUCTORS_WARNING "-Wexit-time-destructors" SWIFT_CORE_CXX_FLAGS)
+if(CXX_SUPPORTS_EXIT_TIME_DESTRUCTORS_WARNING)
+  list(APPEND SWIFT_CORE_CXX_FLAGS "-Wexit-time-destructors")
+endif()
+
+# We don't want runtime C++ code to export symbols we didn't explicitly
+# choose to.
+check_cxx_compiler_flag("-fvisibility=hidden" CXX_SUPPORTS_DEFAULT_HIDDEN_VISIBILITY)
+if(CXX_SUPPORTS_DEFAULT_HIDDEN_VISIBILITY)
+  list(APPEND SWIFT_CORE_CXX_FLAGS "-fvisibility=hidden")
+endif()
 
 if(SWIFT_BUILD_STDLIB)
   # These must be kept in dependency order so that any referenced targets
@@ -21,6 +34,6 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
   endif()
 endif()
 
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
   add_subdirectory(Glibc)
 endif()

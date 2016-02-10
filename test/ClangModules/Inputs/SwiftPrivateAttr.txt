@@ -25,7 +25,7 @@ class Foo : NSObject, __PrivProto {
   init()
 }
 class Bar : NSObject {
-  init!()
+  init!(__: ())
   init!(__noArgs: ())
   init!(__oneArg arg: Int32)
   init!(__twoArgs arg: Int32, other arg2: Int32)
@@ -94,6 +94,11 @@ struct NSOptions : OptionSetType {
   static var __PrivA: NSOptions { get }
   static var B: NSOptions { get }
 }
+@available(*, deprecated, renamed="__PrivCFType")
 typealias __PrivCFTypeRef = __PrivCFType
+class __PrivCFType {
+}
+@available(*, deprecated, renamed="__PrivCFSub")
 typealias __PrivCFSubRef = __PrivCFSub
+typealias __PrivCFSub = __PrivCFType
 typealias __PrivInt = Int32

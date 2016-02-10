@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2015 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See http://swift.org/LICENSE.txt for license information
@@ -27,6 +27,13 @@
 using namespace swift;
 using namespace camel_case;
 
+bool swift::canBeArgumentLabel(StringRef identifier) {
+  if (identifier == "var" || identifier == "let" || identifier == "inout")
+    return false;
+
+  return true;
+}
+
 PrepositionKind swift::getPrepositionKind(StringRef word) {
 #define DIRECTIONAL_PREPOSITION(Word)           \
   if (word.equals_lower(#Word))                 \
@@ -47,9 +54,6 @@ PartOfSpeech swift::getPartOfSpeech(StringRef word) {
 #define VERB(Word)                              \
   if (word.equals_lower(#Word))                 \
     return PartOfSpeech::Verb;
-#define AUXILIARY_VERB(Word)                    \
-  if (word.equals_lower(#Word))                 \
-    return PartOfSpeech::AuxiliaryVerb;
 #include "PartsOfSpeech.def"
 
   // Identify gerunds, which always end in "ing".
@@ -92,6 +96,11 @@ PartOfSpeech swift::getPartOfSpeech(StringRef word) {
   return PartOfSpeech::Unknown;
 }
 
+/// Whether the given word is a plural s
+static bool isPluralSuffix(StringRef word) {
+  return word == "s" || word == "es" || word == "ies";
+}
+
 void WordIterator::computeNextPosition() const {
   assert(Position < String.size() && "Already at end of string");
 
@@ -114,7 +123,20 @@ void WordIterator::computeNextPosition() const {
     // If we hit the end of the string, that's it. Otherwise, this
     // word ends before the last uppercase letter if the next word is alphabetic
     // (URL_Loader) or after the last uppercase letter if it's not (UTF_8).
-    NextPosition = (i == n || !clang::isLowercase(String[i])) ? i : i-1;
+
+    // Collect the lowercase letters up to the next word.
+    unsigned endOfNext = i;
+    while (endOfNext < n && clang::isLowercase(String[endOfNext]))
+      ++endOfNext;
+
+    // If the next word is a plural suffix, add it on.
+    if (i == n || isPluralSuffix(String.slice(i, endOfNext)))
+      NextPosition = endOfNext;
+    else if (clang::isLowercase(String[i]))
+      NextPosition = i-1;
+    else
+      NextPosition = i;
+
     NextPositionValid = true;
     return;
   }
@@ -136,9 +158,19 @@ void WordIterator::computePrevPosition() const {
   while (i > 0 && !clang::isUppercase(String[i-1]) && String[i-1] != '_')
     --i;
 
+  // If what we found is a plural suffix, keep going.
+  bool skippedPluralSuffix = false;
+  unsigned effectiveEndPosition = Position;
+  if (i > 0 && isPluralSuffix(String.slice(i, Position))) {
+    skippedPluralSuffix = true;
+    effectiveEndPosition = i;
+    while (i > 0 && !clang::isUppercase(String[i-1]) && String[i-1] != '_')
+      --i;
+  }
+
   // If we found any lowercase letters, this was a normal camel case
   // word (not an acronym).
-  if (i < Position) {
+  if (i < effectiveEndPosition) {
     // If we hit the beginning of the string, that's it. Otherwise, this
     // word starts with an uppercase letter if the next word is alphabetic
     // (URL_Loader) or after the last uppercase letter if it's not (UTF_8).
@@ -309,10 +341,16 @@ static bool isKeyword(StringRef identifier) {
 static Optional<StringRef> skipTypeSuffix(StringRef typeName) {
   if (typeName.empty()) return None;
 
+  auto lastWord = camel_case::getLastWord(typeName);
+
   // "Type" suffix.
-  if (camel_case::getLastWord(typeName) == "Type" &&
-      typeName.size() > 4) {
+  if (lastWord == "Type" && typeName.size() > 4) {
     return typeName.drop_back(4);
+  }
+
+  // "Ref" suffix.
+  if (lastWord == "Ref" && typeName.size() > 3) {
+    return typeName.drop_back(3);
   }
 
   // \d+D for dimensionality.
@@ -345,7 +383,8 @@ static bool matchNameWordToTypeWord(StringRef nameWord, StringRef typeWord) {
     // We can match the suffix of the type so long as everything preceding the
     // match is neither a lowercase letter nor a '_'. This ignores type
     // prefixes for acronyms, e.g., the 'NS' in 'NSURL'.
-    if (typeWord.endswith(nameWord)) {
+    if (typeWord.endswith_lower(nameWord) && 
+        !clang::isLowercase(typeWord[typeWord.size()-nameWord.size()])) {
       // Check that everything preceding the match is neither a lowercase letter
       // nor a '_'.
       for (unsigned i = 0, n = nameWord.size(); i != n; ++i) {
@@ -357,7 +396,7 @@ static bool matchNameWordToTypeWord(StringRef nameWord, StringRef typeWord) {
 
     // We can match a prefix so long as everything following the match is
     // a number.
-    if (camel_case::startsWithIgnoreFirstCase(typeWord, nameWord)) {
+    if (typeWord.startswith_lower(nameWord)) {
       for (unsigned i = nameWord.size(), n = typeWord.size(); i != n; ++i) {
         if (!clang::isDigit(typeWord[i])) return false;
       }
@@ -369,7 +408,7 @@ static bool matchNameWordToTypeWord(StringRef nameWord, StringRef typeWord) {
   }
 
   // Check for an exact match.
-  return camel_case::sameWordIgnoreFirstCase(nameWord, typeWord);
+  return nameWord.equals_lower(typeWord);
 }
 
 /// Match the beginning of the name to the given type name.
@@ -436,9 +475,10 @@ bool InheritedNameSet::contains(StringRef name) const {
 }
 
 /// Wrapper for camel_case::toLowercaseWord that uses string scratch space.
-static StringRef toLowercaseWord(StringRef string, StringScratchSpace &scratch){
+StringRef camel_case::toLowercaseWord(StringRef string,
+                                      StringScratchSpace &scratch){
   llvm::SmallString<32> scratchStr;
-  StringRef result = camel_case::toLowercaseWord(string, scratchStr);
+  StringRef result = toLowercaseWord(string, scratchStr);
   if (string == result)
     return string;
 
@@ -504,16 +544,25 @@ static StringRef omitNeedlessWords(StringRef name,
   // name.
   auto nameWordRevIter = nameWords.rbegin(),
     nameWordRevIterBegin = nameWordRevIter,
+    firstMatchingNameWordRevIter = nameWordRevIter,
     nameWordRevIterEnd = nameWords.rend();
   auto typeWordRevIter = typeWords.rbegin(),
     typeWordRevIterEnd = typeWords.rend();
+
   bool anyMatches = false;
+  auto matched = [&] {
+    if (anyMatches) return;
+
+    anyMatches = true;
+    firstMatchingNameWordRevIter = nameWordRevIter;
+  };
+
   while (nameWordRevIter != nameWordRevIterEnd &&
          typeWordRevIter != typeWordRevIterEnd) {
     // If the names match, continue.
     auto nameWord = *nameWordRevIter;
     if (matchNameWordToTypeWord(nameWord, *typeWordRevIter)) {
-      anyMatches = true;
+      matched();
       ++nameWordRevIter;
       ++typeWordRevIter;
       continue;
@@ -528,7 +577,7 @@ static StringRef omitNeedlessWords(StringRef name,
       ++nextTypeWordRevIter;
       if (nextTypeWordRevIter != typeWordRevIterEnd &&
           matchNameWordToTypeWord("Index", *nextTypeWordRevIter)) {
-        anyMatches = true;
+        matched();
         ++nameWordRevIter;
         typeWordRevIter = nextTypeWordRevIter;
         ++typeWordRevIter;
@@ -540,7 +589,7 @@ static StringRef omitNeedlessWords(StringRef name,
     if (matchNameWordToTypeWord(nameWord, "Index") &&
         (matchNameWordToTypeWord("Int", *typeWordRevIter) ||
          matchNameWordToTypeWord("Integer", *typeWordRevIter))) {
-      anyMatches = true;
+      matched();
       ++nameWordRevIter;
       ++typeWordRevIter;
       continue;
@@ -549,15 +598,23 @@ static StringRef omitNeedlessWords(StringRef name,
     // Special case: if the word in the name ends in 's', and we have
     // a collection element type, see if this is a plural.
     if (!typeName.CollectionElement.empty() && nameWord.size() > 2 &&
-        nameWord.back() == 's') {
+        nameWord.back() == 's' && role != NameRole::BaseNameSelf) {
       // Check <element name>s.
       auto shortenedNameWord
         = name.substr(0, nameWordRevIter.base().getPosition()-1);
       auto newShortenedNameWord
         = omitNeedlessWords(shortenedNameWord, typeName.CollectionElement,
                             NameRole::Partial, allPropertyNames, scratch);
+      if (shortenedNameWord == newShortenedNameWord &&
+          shortenedNameWord.back() == 'e') {
+        shortenedNameWord.drop_back();
+        newShortenedNameWord =
+          omitNeedlessWords(shortenedNameWord, typeName.CollectionElement,
+                            NameRole::Partial, allPropertyNames, scratch);
+      }
+
       if (shortenedNameWord != newShortenedNameWord) {
-        anyMatches = true;
+        matched();
         unsigned targetSize = newShortenedNameWord.size();
         while (nameWordRevIter.base().getPosition() > targetSize)
           ++nameWordRevIter;
@@ -576,6 +633,14 @@ static StringRef omitNeedlessWords(StringRef name,
       }
     }
 
+    // If we're matching the base name of a method against the type of
+    // 'Self', and we haven't matched anything yet, skip over words in
+    // the name.
+    if (role == NameRole::BaseNameSelf && !anyMatches) {
+      ++nameWordRevIter;
+      continue;
+    }
+
     break;
   }
 
@@ -585,17 +650,48 @@ static StringRef omitNeedlessWords(StringRef name,
   if (anyMatches) {
     // Handle complete name matches.
     if (nameWordRevIter == nameWordRevIterEnd) {
-      // If we're doing a partial match, return the empty string.
-      if (role == NameRole::Partial) return "";
+      // If we're doing a partial match or we have an initial
+      // parameter, return the empty string.
+      if (role == NameRole::Partial || role == NameRole::FirstParameter)
+        return "";
 
       // Leave the name alone.
       return name;
+    }
+
+    // Don't strip just "Error".
+    if (nameWordRevIter != nameWordRevIterBegin) {
+      auto nameWordPrev = std::prev(nameWordRevIter);
+      if (nameWordPrev == nameWordRevIterBegin && *nameWordPrev == "Error")
+        return name;
     }
 
     switch (role) {
     case NameRole::Property:
       // Always strip off type information.
       name = name.substr(0, nameWordRevIter.base().getPosition());
+      break;
+
+    case NameRole::BaseNameSelf:
+      switch (getPartOfSpeech(*nameWordRevIter)) {
+      case PartOfSpeech::Verb: {
+        // Splice together the parts before and after the matched
+        // type. For example, if we matched "ViewController" in
+        // "dismissViewControllerAnimated", stitch together
+        // "dismissAnimated".
+        SmallString<16> newName =
+          name.substr(0, nameWordRevIter.base().getPosition());
+        newName
+          += name.substr(firstMatchingNameWordRevIter.base().getPosition());
+        name = scratch.copyString(newName);
+        break;
+      }
+
+      case PartOfSpeech::Preposition:
+      case PartOfSpeech::Gerund:
+      case PartOfSpeech::Unknown:
+        return name;
+      }
       break;
 
     case NameRole::BaseName:
@@ -657,7 +753,6 @@ static StringRef omitNeedlessWords(StringRef name,
         break;
 
       case PartOfSpeech::Unknown:
-      case PartOfSpeech::AuxiliaryVerb:
         // Assume it's a noun or adjective; don't strip anything.
         break;
       }
@@ -672,6 +767,7 @@ static StringRef omitNeedlessWords(StringRef name,
 
   switch (role) {
   case NameRole::BaseName:
+  case NameRole::BaseNameSelf:
   case NameRole::Property:
     // If we ended up with a keyword for a property name or base name,
     // do nothing.
@@ -689,26 +785,8 @@ static StringRef omitNeedlessWords(StringRef name,
   return name;
 }
 
-/// Determine whether the given word indicates a boolean result.
-static bool nameIndicatesBooleanResult(StringRef name) {
-  for (auto word: camel_case::getWords(name)) {
-    // Auxiliary verbs indicate Boolean results.
-    if (getPartOfSpeech(word) == PartOfSpeech::AuxiliaryVerb)
-      return true;
-
-    // Words that end in "s" indicate either Boolean results---it
-    // could be a verb in the present continuous tense---or some kind
-    // of plural, for which "is" would be inappropriate anyway.
-    if (word.back() == 's')
-      return true;
-  }
-
-  return false;
-}
-
-/// A form of toLowercaseWord that also lowercases acronyms.
-static StringRef toLowercaseWordAndAcronym(StringRef string,
-                                           StringScratchSpace &scratch) {
+StringRef camel_case::toLowercaseInitialisms(StringRef string,
+                                             StringScratchSpace &scratch) {
   if (string.empty())
     return string;
 
@@ -716,12 +794,22 @@ static StringRef toLowercaseWordAndAcronym(StringRef string,
   if (!clang::isUppercase(string[0]))
     return string;
 
-  // Lowercase until we hit the end there is an uppercase letter
-  // followed by a non-uppercase letter.
+  // Lowercase until we hit the an uppercase letter followed by a
+  // non-uppercase letter.
   llvm::SmallString<32> scratchStr;
-  for (unsigned i = 0, n = string.size(); i != n; ++i) {
+  scratchStr.push_back(clang::toLowercase(string[0]));
+  for (unsigned i = 1, n = string.size(); i != n; ++i) {
     // If the next character is not uppercase, stop.
     if (i < n - 1 && !clang::isUppercase(string[i+1])) {
+      // If the next non-uppercase character was not a letter, we seem
+      // to have a plural, we should still lowercase the character
+      // we're on.
+      if (!clang::isLetter(string[i+1]) ||
+          isPluralSuffix(camel_case::getFirstWord(string.substr(i+1)))) {
+        scratchStr.push_back(clang::toLowercase(string[i]));
+        ++i;
+      }
+
       scratchStr.append(string.substr(i));
       break;
     }
@@ -730,6 +818,214 @@ static StringRef toLowercaseWordAndAcronym(StringRef string,
   }
 
   return scratch.copyString(scratchStr);
+}
+
+/// Determine whether the given word preceding "with" indicates that
+/// "with" should be retained.
+static bool wordPairsWithWith(StringRef word) {
+  return camel_case::sameWordIgnoreFirstCase(word, "compatible");
+}
+
+/// Determine whether the given word occurring before the given
+/// preposition results in a conflict that suppresses preposition
+/// splitting.
+static bool wordConflictsBeforePreposition(StringRef word,
+                                           StringRef preposition) {
+  if (camel_case::sameWordIgnoreFirstCase(preposition, "with")) {
+    if (camel_case::sameWordIgnoreFirstCase(word, "encode"))
+      return true;
+
+    if (camel_case::sameWordIgnoreFirstCase(word, "copy"))
+      return true;
+
+    return false;
+  }
+
+  return false;
+}
+
+/// Determine whether the given word occurring after the given
+/// preposition results in a conflict that suppresses preposition
+/// splitting.
+static bool wordConflictsAfterPreposition(StringRef word,
+                                          StringRef preposition) {
+  if (camel_case::sameWordIgnoreFirstCase(preposition, "with")) {
+    if (camel_case::sameWordIgnoreFirstCase(word, "error") ||
+        camel_case::sameWordIgnoreFirstCase(word, "no"))
+      return true;
+  }
+
+  if (camel_case::sameWordIgnoreFirstCase(word, "visible") &&
+      camel_case::sameWordIgnoreFirstCase(preposition, "to"))
+    return true;
+
+  return false;
+}
+
+/// Determine whether there is a preposition in the given name.
+static bool containsPreposition(StringRef name) {
+  for (auto word : camel_case::getWords(name)) {
+    if (camel_case::sameWordIgnoreFirstCase(word, "with")) continue;
+    if (getPartOfSpeech(word) == PartOfSpeech::Preposition) return true;
+  }
+  return false;
+}
+
+/// Split the base name after the last preposition, if there is one.
+static bool splitBaseNameAfterLastPreposition(StringRef &baseName,
+                                              StringRef &argName,
+                                              const OmissionTypeName &paramType,
+                                              StringRef secondArgName) {
+  // Scan backwards for a preposition.
+  auto nameWords = camel_case::getWords(baseName);
+  auto nameWordRevIter = nameWords.rbegin(),
+    nameWordRevIterBegin = nameWordRevIter,
+    nameWordRevIterEnd = nameWords.rend();
+  bool done = false;
+  while (nameWordRevIter != nameWordRevIterEnd && !done) {
+    switch (getPartOfSpeech(*nameWordRevIter)) {
+    case PartOfSpeech::Preposition:
+      done = true;
+      break;
+
+    case PartOfSpeech::Verb:
+    case PartOfSpeech::Gerund:
+      return false;
+
+    case PartOfSpeech::Unknown:
+      ++nameWordRevIter;
+      break;
+    }
+  }
+
+  // If we ran out of words, there's nothing to split.
+  if (!done) return false;
+
+  // We found a split point.
+  auto preposition = *nameWordRevIter;
+
+  // If we have a conflict with the word before the preposition, don't
+  // split.
+  if (std::next(nameWordRevIter) != nameWordRevIterEnd &&
+      wordConflictsBeforePreposition(*std::next(nameWordRevIter), preposition))
+    return false;
+
+  // If we have a conflict with the word after the preposition, don't
+  // split.
+  if (nameWordRevIter != nameWordRevIterBegin &&
+      wordConflictsAfterPreposition(*std::prev(nameWordRevIter), preposition))
+    return false;
+
+  // Determine whether we should drop the preposition.
+  bool dropPreposition = false;
+
+  // If the first parameter has a default, drop the preposition.
+  if (paramType.hasDefaultArgument()) {
+    dropPreposition = true;
+
+    // If the preposition is "with" and the base name starts with a
+    // verb, assume "with" is a separator and remove it.
+  } else if (nameWordRevIter.base().getPosition() > 4 &&
+             camel_case::sameWordIgnoreFirstCase(preposition, "with") &&
+             !wordPairsWithWith(*std::next(nameWordRevIter)) &&
+             getPartOfSpeech(camel_case::getFirstWord(baseName))
+               == PartOfSpeech::Verb) {
+    dropPreposition = true;
+
+  // If the preposition is "using" and the parameter is a function or
+  // block, assume "using" is a separator and remove it.
+  } else if (nameWordRevIter.base().getPosition() > 5 &&
+             paramType.isFunction() &&
+             camel_case::sameWordIgnoreFirstCase(preposition, "using")) {
+    dropPreposition = true;
+  }
+
+  // If we have a preposition in the second argument label, pull the
+  // first preposition into the first argument label to balance them.
+  bool prepositionOnArgLabel = false;
+  if (containsPreposition(secondArgName)) {
+    prepositionOnArgLabel = true;
+    ++nameWordRevIter;
+  }
+
+  unsigned startOfArgumentLabel = nameWordRevIter.base().getPosition();
+  unsigned endOfBaseName = startOfArgumentLabel;
+
+  // If we're supposed to drop the preposition, do so.
+  if (dropPreposition) {
+    if (prepositionOnArgLabel)
+      startOfArgumentLabel += preposition.size();
+    else {
+      endOfBaseName -= preposition.size();
+    }
+  }
+  if (endOfBaseName == 0) return false;
+
+  // If the base name is vacuous and there are two or fewer words in
+  // the base name, don't split.
+  auto newBaseName = baseName.substr(0, endOfBaseName);
+  {
+    auto newWords = camel_case::getWords(newBaseName);
+    auto newWordsIter = newWords.begin();
+    if (isVacuousName(*newWordsIter)) {
+      // Just one word?
+      ++newWordsIter;
+      if (newWordsIter == newWords.end()) return false;
+
+      // Or two words?
+      ++newWordsIter;
+      if (newWordsIter == newWords.end()) return false;
+
+      // Okay: there is enough in the base name.
+    }
+  }
+
+  // Update the argument label and base name.
+  argName = baseName.substr(startOfArgumentLabel);
+  baseName = newBaseName;
+
+  return true;
+}
+
+/// Split the base name, if it makes sense.
+static bool splitBaseName(StringRef &baseName, StringRef &argName,
+                          const OmissionTypeName &paramType,
+                          StringRef paramName,
+                          StringRef secondArgName) {
+  // If there is already an argument label, do nothing.
+  if (!argName.empty()) return false;
+
+  // Try splitting a Boolean "Animated".
+  if (paramType.isBoolean() &&
+      camel_case::getLastWord(baseName) == "Animated") {
+    baseName = baseName.substr(0, baseName.size() - strlen("Animated"));
+    argName = "animated";
+    return true;
+  }
+
+  // Don't split anything that starts with "set".
+  if (camel_case::getFirstWord(baseName) == "set")
+    return false;
+
+  // Don't split a method that looks like an action (with a "sender"
+  // of type AnyObject).
+  if (paramName == "sender" &&
+      camel_case::getLastWord(paramType.Name) == "Object")
+    return false;
+
+  // Try splitting after the last preposition.
+  if (splitBaseNameAfterLastPreposition(baseName, argName, paramType,
+                                        secondArgName))
+    return true;
+
+  return false;
+}
+
+// Retrieve the second "real" argument label.
+static StringRef getSecondArgumentName(ArrayRef<StringRef> names) {
+  if (names.empty()) return "";
+  if (names[0] == "error") return getSecondArgumentName(names.slice(1));
+  return names[0];
 }
 
 bool swift::omitNeedlessWords(StringRef &baseName,
@@ -747,14 +1043,14 @@ bool swift::omitNeedlessWords(StringRef &baseName,
   /// Local function that lowercases all of the base names and
   /// argument names before returning.
   auto lowercaseAcronymsForReturn = [&] {
-    StringRef newBaseName = toLowercaseWordAndAcronym(baseName, scratch);
+    StringRef newBaseName = toLowercaseInitialisms(baseName, scratch);
     if (baseName.data() != newBaseName.data()) {
       baseName = newBaseName;
       anyChanges = true;
     }
 
     for (StringRef &argName : argNames) {
-      StringRef newArgName = toLowercaseWordAndAcronym(argName, scratch);
+      StringRef newArgName = toLowercaseInitialisms(argName, scratch);
       if (argName.data() != newArgName.data()) {
         argName = newArgName;
         anyChanges = true;
@@ -776,7 +1072,17 @@ bool swift::omitNeedlessWords(StringRef &baseName,
     }
   }
 
-  // Treat zero-parameter methods and properties the same way.
+  // Strip the context type from the base name of a method.
+  if (!isProperty) {
+    StringRef newBaseName = ::omitNeedlessWords(baseName, contextType,
+                                                NameRole::BaseNameSelf,
+                                                nullptr, scratch);
+    if (newBaseName != baseName) {
+      baseName = newBaseName;
+      anyChanges = true;
+    }
+  }
+
   if (paramTypes.empty()) {
     if (resultTypeMatchesContext) {
       StringRef newBaseName = ::omitNeedlessWords(
@@ -791,18 +1097,14 @@ bool swift::omitNeedlessWords(StringRef &baseName,
       }
     }
 
-    // Boolean properties should start with "is", unless their
-    // first word already implies a Boolean result.
-    if (resultType.isBoolean() && isProperty &&
-        !nameIndicatesBooleanResult(baseName)) {
-      SmallString<32> newName("is");
-      camel_case::appendSentenceCase(newName, baseName);
-      baseName = scratch.copyString(newName);
-      anyChanges = true;
-    }
-
     return lowercaseAcronymsForReturn();
   }
+
+  // If needed, split the base name.
+  if (!argNames.empty() &&
+      splitBaseName(baseName, argNames[0], paramTypes[0], firstParamName,
+                    getSecondArgumentName(argNames.slice(1))))
+    anyChanges = true;
 
   // Omit needless words based on parameter types.
   for (unsigned i = 0, n = argNames.size(); i != n; ++i) {
@@ -813,6 +1115,7 @@ bool swift::omitNeedlessWords(StringRef &baseName,
     // Omit needless words based on the type of the parameter.
     NameRole role = i > 0 ? NameRole::SubsequentParameter
       : argNames[0].empty() ? NameRole::BaseName
+      : baseName == "init" ? NameRole::SubsequentParameter
       : NameRole::FirstParameter;
 
     // Omit needless words from the name.
@@ -823,77 +1126,10 @@ bool swift::omitNeedlessWords(StringRef &baseName,
                                               : nullptr,
                                             scratch);
 
-    // Did the name change?
-    if (name != newName)
-      anyChanges = true;
-
-    // If the first parameter has a default argument, and there is a
-    // preposition in the base name, split the base name at that preposition.
-    if (role == NameRole::BaseName && argNames[0].empty() &&
-        paramTypes[0].hasDefaultArgument()) {
-      // Scan backwards for a preposition.
-      auto nameWords = camel_case::getWords(newName);
-      auto nameWordRevIter = nameWords.rbegin(),
-        nameWordRevIterEnd = nameWords.rend();
-      bool found = false, done = false;
-      while (nameWordRevIter != nameWordRevIterEnd && !done) {
-        switch (getPartOfSpeech(*nameWordRevIter)) {
-        case PartOfSpeech::Preposition:
-          found = true;
-          done = true;
-          break;
-
-        case PartOfSpeech::Verb:
-        case PartOfSpeech::Gerund:
-          // Don't skip over verbs or gerunds.
-          done = true;
-          break;
-
-        case PartOfSpeech::Unknown:
-        case PartOfSpeech::AuxiliaryVerb:
-          ++nameWordRevIter;
-          break;
-        }
-      }
-
-      // If we found a split point that's not at the beginning of the
-      // name, split there.
-      if (found) {
-        ++nameWordRevIter;
-        unsigned splitPos = nameWordRevIter.base().getPosition();
-        if (splitPos > 0) {
-          unsigned afterSplitPos = splitPos;
-
-          // Create a first argument name with the remainder of the base name,
-          // lowercased. If we would end up with a vacuous name, go
-          // back and get the original.
-          StringRef newArgName = newName.substr(afterSplitPos);
-          if (isVacuousName(newArgName)) {
-            size_t pos = name.rfind(newArgName);
-            newArgName = name.substr(pos);
-          }
-
-          // If there is a leading "with" on the first argument, drop it.
-          if (newArgName.size() > 4 &&
-              camel_case::sameWordIgnoreFirstCase(
-                camel_case::getFirstWord(newArgName),
-                "with")) {
-            newArgName = newArgName.substr(4);
-          }
-
-          argNames[0] = toLowercaseWord(newArgName, scratch);
-
-          // Update the base name by splitting at the preposition.
-          newName = newName.substr(0, splitPos);
-
-          anyChanges = true;
-        }
-      }
-    }
-
     if (name == newName) continue;
 
     // Record this change.
+    anyChanges = true;
     if (role == NameRole::BaseName) {
       baseName = newName;
     } else {

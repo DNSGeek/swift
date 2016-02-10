@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2015 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See http://swift.org/LICENSE.txt for license information
@@ -26,6 +26,7 @@
 #include "swift/IDE/CommentConversion.h"
 #include "swift/IDE/Utils.h"
 #include "swift/Markup/XMLUtils.h"
+#include "swift/Sema/IDETypeChecking.h"
 
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/DeclObjC.h"
@@ -54,9 +55,36 @@ private:
   }
 };
 
-static void printAnnotatedDeclaration(const ValueDecl *VD, raw_ostream &OS) {
+static Type findBaseTypeForReplacingArchetype(const ValueDecl *VD, const Type Ty) {
+  if (Ty.isNull())
+    return Type();
+
+  // Find the nominal type decl related to VD.
+  NominalTypeDecl *NTD = VD->getDeclContext()->
+    isNominalTypeOrNominalTypeExtensionContext();
+  if (!NTD)
+    return Type();
+  Type Result;
+
+  // Walk the type tree to find the a sub-type who's convertible to the
+  // found nominal.
+  Ty.visit([&](Type T) {
+    if (!Result && (T->getAnyNominal() == NTD ||
+                    isConvertibleTo(T, NTD->getDeclaredType(),
+                                    VD->getDeclContext()))) {
+      Result = T;
+    }
+  });
+  return Result;
+}
+
+static void printAnnotatedDeclaration(const ValueDecl *VD, const Type Ty,
+                                      const Type BaseTy,
+                                      raw_ostream &OS) {
   AnnotatedDeclarationPrinter Printer(OS);
   PrintOptions PO = PrintOptions::printQuickHelpDeclaration();
+  if (BaseTy)
+    PO.setArchetypeTransformForQuickHelp(BaseTy, VD->getDeclContext());
 
   // If it's implicit, try to find an overridden ValueDecl that's not implicit.
   // This will ensure we can properly annotate TypeRepr with a usr
@@ -99,9 +127,9 @@ void walkRelatedDecls(const ValueDecl *VD, const FnTy &Fn) {
   }
 }
 
-//============================================================================//
+//===----------------------------------------------------------------------===//
 // SwiftLangSupport::getCursorInfo
-//============================================================================//
+//===----------------------------------------------------------------------===//
 
 static StringRef getSourceToken(unsigned Offset,
                                 ImmutableTextSnapshotRef Snap) {
@@ -235,7 +263,7 @@ static bool passCursorInfoForDecl(const ValueDecl *VD,
     return true;
 
   SmallString<64> SS;
-
+  auto BaseType = findBaseTypeForReplacingArchetype(VD, Ty);
   unsigned NameBegin = SS.size();
   {
     llvm::raw_svector_ostream OS(SS);
@@ -267,9 +295,17 @@ static bool passCursorInfoForDecl(const ValueDecl *VD,
   unsigned DeclBegin = SS.size();
   {
     llvm::raw_svector_ostream OS(SS);
-    printAnnotatedDeclaration(VD, OS);
+    printAnnotatedDeclaration(VD, Ty, BaseType, OS);
   }
   unsigned DeclEnd = SS.size();
+
+  unsigned GroupBegin = SS.size();
+  {
+    llvm::raw_svector_ostream OS(SS);
+    if (auto OP = VD->getGroupName())
+      OS << OP.getValue();
+  }
+  unsigned GroupEnd = SS.size();
 
   SmallVector<std::pair<unsigned, unsigned>, 4> OverUSROffs;
 
@@ -309,6 +345,8 @@ static bool passCursorInfoForDecl(const ValueDecl *VD,
         PO.SkipIntroducerKeywords = true;
         PO.ArgAndParamPrinting = PrintOptions::ArgAndParamPrintingMode::ArgumentOnly;
         XMLEscapingPrinter Printer(OS);
+        if (BaseType)
+          PO.setArchetypeTransform(BaseType, VD->getDeclContext());
         RelatedDecl->print(Printer, PO);
       } else {
         llvm::SmallString<128> Buf;
@@ -349,6 +387,7 @@ static bool passCursorInfoForDecl(const ValueDecl *VD,
                                    DocCommentEnd-DocCommentBegin);
   StringRef AnnotatedDecl = StringRef(SS.begin()+DeclBegin,
                                       DeclEnd-DeclBegin);
+  StringRef GroupName = StringRef(SS.begin() + GroupBegin, GroupEnd - GroupBegin);
 
   llvm::Optional<std::pair<unsigned, unsigned>> DeclarationLoc;
   StringRef Filename;
@@ -390,9 +429,10 @@ static bool passCursorInfoForDecl(const ValueDecl *VD,
   Info.Filename = Filename;
   Info.OverrideUSRs = OverUSRs;
   Info.AnnotatedRelatedDeclarations = AnnotatedRelatedDecls;
+  Info.GroupName = GroupName;
   Info.IsSystem = IsSystem;
-  Info.TypeInteface = ASTPrinter::printTypeInterface(Ty, VD->getDeclContext(),
-                                                     TypeInterface) ?
+  Info.TypeInterface = ASTPrinter::printTypeInterface(Ty, VD->getDeclContext(),
+                                                      TypeInterface) ?
     StringRef(TypeInterface) : StringRef();
   Receiver(Info);
   return false;
@@ -562,7 +602,7 @@ void SwiftLangSupport::getCursorInfo(
     if (trace::enabled()) {
       trace::SwiftInvocation SwiftArgs;
       trace::initTraceInfo(SwiftArgs, InputFile, Args);
-      // Do we nedd to record any files? If yes -- which ones?
+      // Do we need to record any files? If yes -- which ones?
       trace::StringPairs OpArgs {
         std::make_pair("DocumentName", IFaceGenRef->getDocumentName()),
         std::make_pair("ModuleOrHeaderName", IFaceGenRef->getModuleOrHeaderName()),
@@ -605,9 +645,9 @@ void SwiftLangSupport::getCursorInfo(
                 Receiver);
 }
 
-//============================================================================//
+//===----------------------------------------------------------------------===//
 // SwiftLangSupport::findUSRRange
-//============================================================================//
+//===----------------------------------------------------------------------===//
 
 llvm::Optional<std::pair<unsigned, unsigned>>
 SwiftLangSupport::findUSRRange(StringRef DocumentName, StringRef USR) {
@@ -619,9 +659,9 @@ SwiftLangSupport::findUSRRange(StringRef DocumentName, StringRef USR) {
   return None;
 }
 
-//============================================================================//
+//===----------------------------------------------------------------------===//
 // SwiftLangSupport::findRelatedIdentifiersInFile
-//============================================================================//
+//===----------------------------------------------------------------------===//
 
 namespace {
 class RelatedIdScanner : public ide::SourceEntityWalker {
